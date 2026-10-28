@@ -21,7 +21,7 @@ def get_secret(name):
         return ""
 
 
-MODEL = "gpt-oss-120b"
+MODEL = "openai/gpt-oss-120b"
 GROQ_API_KEY = get_secret("GROQ_API_KEY")
 OMDB_API_KEY = get_secret("OMDB_API_KEY")
 
