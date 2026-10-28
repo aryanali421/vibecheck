@@ -1,4 +1,3 @@
-
 import os, re, json, html
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
@@ -6,14 +5,24 @@ from urllib.parse import quote_plus
 
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from groq import Groq
 
 st.set_page_config(page_title="VibeCheck", page_icon="🎬", layout="wide")
 
+
+def get_secret(name):
+    v = os.environ.get(name, "").strip()
+    if v:
+        return v
+    try:
+        return str(st.secrets.get(name, "")).strip()
+    except Exception:
+        return ""
+
+
 MODEL = "llama-3.3-70b-versatile"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
-OMDB_API_KEY = os.environ.get("OMDB_API_KEY", "").strip()
+GROQ_API_KEY = get_secret("GROQ_API_KEY")
+OMDB_API_KEY = get_secret("OMDB_API_KEY")
 
 MOODS = ["Make me laugh", "Make me feel something", "Make me think", "Keep me on edge",
          "Inspire me", "Something romantic", "Take me somewhere else", "Comfort watch",
@@ -33,12 +42,14 @@ KIND_RULE = {
 def similar(a, b):
     return SequenceMatcher(None, a.lower().strip(), b.lower().strip()).ratio()
 
+
 def omdb(**params):
     r = requests.get("https://www.omdbapi.com/",
                      params={"apikey": OMDB_API_KEY, **params}, timeout=10)
     r.raise_for_status()
     d = r.json()
     return d if d.get("Response") == "True" else None
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def lookup(title, kind, year):
@@ -61,9 +72,11 @@ def lookup(title, kind, year):
         pass
     return {}
 
+
 @st.cache_resource
 def groq_client():
     return Groq(api_key=GROQ_API_KEY)
+
 
 def generate(mood, category, genre, prefs, avoid):
     avoid_line = ("Do NOT suggest any of these (already shown): " + "; ".join(avoid)) if avoid else ""
@@ -127,6 +140,7 @@ Return ONLY JSON:
         raise ValueError("No picks came back. Try again.")
     return items
 
+
 def build_picks(items):
     with ThreadPoolExecutor(max_workers=8) as pool:
         details = list(pool.map(lambda i: lookup(i["title"], i["type"], i["year"]), items))
@@ -137,14 +151,17 @@ def build_picks(items):
             picks = verified
     return picks[:6]
 
+
 # ------------------------------------------------------------
 # HTML helpers (kept on single lines so markdown doesn't mangle them)
 # ------------------------------------------------------------
 def esc(v):
     return html.escape(str(v or ""), quote=True)
 
+
 def clean(v):
     return "" if v in (None, "N/A") else str(v)
+
 
 MARK_SVG = (
     '<svg class="vc-mark" viewBox="0 0 48 48" width="40" height="40" fill="none" aria-hidden="true">'
@@ -157,11 +174,13 @@ MARK_SVG = (
     'stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 
+
 def poster_html(d, title):
     poster = clean(d.get("Poster"))
     img = (f'<img src="{esc(poster)}" alt="" loading="lazy" referrerpolicy="no-referrer">'
            if poster.startswith("https://") else "")
     return f'<div class="vc-poster"><div class="vc-ph">{esc(title)}</div>{img}</div>'
+
 
 def body_html(item, d):
     title = d.get("Title") or item["title"]
@@ -192,5 +211,126 @@ def body_html(item, d):
         f'<a href="{esc(trailer)}" target="_blank" rel="noopener noreferrer">Trailer</a></div>'
     ), title, imdb
 
+
 SKELETON = (
-    '<div class=
+    '<div class="vc-card vc-skel">'
+    '<div class="vc-poster"></div>'
+    '<div class="vc-body">'
+    '<div class="vc-bar" style="width:40%"></div>'
+    '<div class="vc-bar" style="width:75%;height:22px"></div>'
+    '<div class="vc-bar" style="width:30%"></div>'
+    '<div class="vc-bar" style="width:100%"></div>'
+    '<div class="vc-bar" style="width:85%"></div>'
+    '</div></div>'
+)
+
+
+def card_html(item, d):
+    body, title, _ = body_html(item, d)
+    return (f'<div class="vc-card">{poster_html(d, title)}'
+            f'<div class="vc-body">{body}</div></div>')
+
+
+def render_grid(cards):
+    st.markdown('<div class="vc-grid">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------
+# Styles
+# ------------------------------------------------------------
+CSS = """<style>
+#MainMenu, footer {visibility: hidden;}
+.block-container {padding-top: 2.2rem; max-width: 1200px;}
+.vc-head {display:flex; align-items:center; gap:14px; margin-bottom:4px;}
+.vc-name {font-size:2rem; font-weight:700; letter-spacing:-0.02em; color:#ece7df; margin:0;}
+.vc-sub {color:#9a948a; margin:0 0 1.4rem 0; font-size:1rem;}
+.vc-tick {stroke-dasharray:1; stroke-dashoffset:1; animation: vc-draw 1.1s ease-out .2s forwards;}
+@keyframes vc-draw {to {stroke-dashoffset:0;}}
+.vc-grid {display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:18px; margin-top:12px;}
+.vc-card {display:flex; gap:16px; background:#171615; border:1px solid #2a2826; border-radius:16px; padding:14px; transition:border-color .2s, transform .2s;}
+.vc-card:hover {border-color:#e8b04a66; transform:translateY(-2px);}
+.vc-poster {position:relative; flex:0 0 120px; height:178px; border-radius:10px; overflow:hidden; background:#23211f;}
+.vc-poster img {position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
+.vc-ph {position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:10px; font-size:.8rem; color:#6d675e;}
+.vc-body {flex:1; min-width:0;}
+.vc-meta {font-size:.78rem; color:#e8b04a; letter-spacing:.03em; margin-bottom:4px;}
+.vc-title {font-size:1.15rem; font-weight:650; color:#ece7df; margin:0 0 2px 0; line-height:1.25;}
+.vc-genre {font-size:.8rem; color:#8c867c; margin-bottom:8px;}
+.vc-reason {font-size:.92rem; line-height:1.5; color:#cfc9bf; margin:0 0 8px 0;}
+.vc-body details {margin-bottom:8px;}
+.vc-body summary {cursor:pointer; font-size:.82rem; color:#9a948a;}
+.vc-body details p {font-size:.88rem; color:#b5afa5; margin:6px 0 0 0;}
+.vc-links {display:flex; gap:8px;}
+.vc-links a {font-size:.78rem; text-decoration:none; color:#ece7df; border:1px solid #3a3733; padding:4px 10px; border-radius:999px; transition:all .15s;}
+.vc-links a:hover {border-color:#e8b04a; color:#e8b04a;}
+.vc-skel .vc-poster {background:linear-gradient(90deg,#1d1b1a,#2a2826,#1d1b1a); background-size:200% 100%; animation: vc-shimmer 1.3s infinite;}
+.vc-bar {height:12px; border-radius:6px; margin-bottom:10px; background:linear-gradient(90deg,#1d1b1a,#2a2826,#1d1b1a); background-size:200% 100%; animation: vc-shimmer 1.3s infinite;}
+@keyframes vc-shimmer {0% {background-position:200% 0;} 100% {background-position:-200% 0;}}
+@media (max-width: 520px) {.vc-grid {grid-template-columns:1fr;} .vc-poster {flex-basis:96px; height:142px;}}
+</style>"""
+
+st.markdown(CSS, unsafe_allow_html=True)
+st.markdown(
+    f'<div class="vc-head">{MARK_SVG}<h1 class="vc-name">VibeCheck</h1></div>'
+    '<p class="vc-sub">Tell me your mood. I\'ll tell you what to watch.</p>',
+    unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# State
+# ------------------------------------------------------------
+st.session_state.setdefault("picks", [])
+st.session_state.setdefault("shown", [])
+st.session_state.setdefault("error", "")
+
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY is missing. Add it in Streamlit Cloud under Settings → Secrets.")
+    st.stop()
+
+# ------------------------------------------------------------
+# Controls
+# ------------------------------------------------------------
+c1, c2, c3 = st.columns([2, 1.3, 1.5])
+with c1:
+    mood = st.selectbox("Mood", MOODS)
+with c2:
+    category = st.radio("Format", ["Movies", "Shows", "Either"], horizontal=True, index=2)
+with c3:
+    genre = st.selectbox("Genre", GENRES)
+
+prefs = st.text_input("Anything else? (optional)",
+                      placeholder="e.g. nothing too long, loved Parasite, no jump scares")
+
+b1, b2, _ = st.columns([1, 1, 4])
+go = b1.button("Find my picks", type="primary", use_container_width=True)
+more = b2.button("Show different ones", use_container_width=True,
+                 disabled=not st.session_state["picks"])
+
+
+def run(avoid):
+    placeholder = st.empty()
+    placeholder.markdown('<div class="vc-grid">' + SKELETON * 6 + "</div>", unsafe_allow_html=True)
+    try:
+        items = generate(mood, category, genre, prefs, avoid)
+        picks = build_picks(items)
+        st.session_state["picks"] = picks
+        st.session_state["shown"] = avoid + [i["title"] for i, _ in picks]
+        st.session_state["error"] = ""
+    except Exception as e:
+        st.session_state["error"] = str(e) or "Something went wrong. Try again."
+    placeholder.empty()
+
+
+if go:
+    run([])
+elif more:
+    run(list(st.session_state["shown"]))
+
+# ------------------------------------------------------------
+# Results
+# ------------------------------------------------------------
+if st.session_state["error"]:
+    st.error(st.session_state["error"])
+elif st.session_state["picks"]:
+    render_grid([card_html(item, d) for item, d in st.session_state["picks"]])
+    if not OMDB_API_KEY:
+        st.caption("No OMDB_API_KEY set, so posters and ratings are off. Picks still work.")
